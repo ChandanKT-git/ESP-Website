@@ -195,25 +195,85 @@ class SurveyManagement(ProgramModuleObj):
             return self.csv_template_download(request, tl, one, two, module, extra, prog)
         elif extra == 'csv_import':
             return self.csv_import(request, tl, one, two, module, extra, prog)
+        elif extra == 'csv_export':
+            return self.csv_export(request, tl, one, two, module, extra, prog)
+
+    @needs_admin
+    def csv_export(self, request, tl, one, two, module, extra, prog):
+        """Export an existing survey's questions to CSV format."""
+        survey_id = request.GET.get('survey_id')
+
+        try:
+            survey = Survey.objects.get(id=survey_id, program=prog)
+        except (Survey.DoesNotExist, ValueError, TypeError):
+            from esp.middleware import ESPError
+            raise ESPError('Survey not found for this program.', log=False)
+
+        # Create CSV response
+        response = HttpResponse(content_type='text/csv')
+        filename = f'survey_{survey.id}_{survey.name.replace(" ", "_")}.csv'
+        response['Content-Disposition'] = f'attachment; filename="{filename}"'
+
+        writer = csv.writer(response)
+        writer.writerow(['question_text', 'question_type', 'per_class', 'seq', 'param_values'])
+
+        # Export all questions from the survey
+        questions = Question.objects.filter(survey=survey).order_by('per_class', 'seq')
+        for question in questions:
+            writer.writerow([
+                question.name,
+                question.question_type.name,
+                'true' if question.per_class else 'false',
+                question.seq,
+                question._param_values or '',
+            ])
+
+        return response
 
     @needs_admin
     def csv_template_download(self, request, tl, one, two, module, extra, prog):
-        """Generate and return a CSV template file with headers and example rows."""
+        """Generate and return a CSV template file with one example of each question type."""
         response = HttpResponse(content_type='text/csv')
         response['Content-Disposition'] = 'attachment; filename="survey_questions_template.csv"'
 
         writer = csv.writer(response)
         writer.writerow(['question_text', 'question_type', 'per_class', 'seq', 'param_values'])
 
-        # Add example rows using actual QuestionType names from the database
-        question_types = list(QuestionType.objects.values_list('name', flat=True)[:3])
-        examples = [
-            ('How would you rate this program?', question_types[0] if len(question_types) > 0 else 'yes-no response', 'false', '1', ''),
-            ('Rate your class experience', question_types[1] if len(question_types) > 1 else 'numeric rating', 'true', '2', '5|Low|Medium|High'),
-            ('Any additional comments?', question_types[0] if len(question_types) > 0 else 'yes-no response', 'false', '3', ''),
-        ]
-        for example in examples:
-            writer.writerow(example)
+        # Get all question types and create one example for each
+        question_types = QuestionType.objects.all().order_by('name')
+        seq = 1
+
+        for qt in question_types:
+            # Create appropriate example based on question type characteristics
+            if qt.is_numeric and qt.is_countable:
+                # Numeric rating type
+                question_text = f'Rate this on a scale (example for {qt.name})'
+                param_values = '5|Poor|Fair|Good|Very Good|Excellent'
+            elif 'yes' in qt.name.lower() or 'no' in qt.name.lower():
+                # Yes/No type
+                question_text = f'Did you enjoy this? (example for {qt.name})'
+                param_values = ''
+            elif 'text' in qt.name.lower() or 'answer' in qt.name.lower():
+                # Text answer type
+                question_text = f'Please provide your feedback (example for {qt.name})'
+                param_values = ''
+            elif 'instruction' in qt.name.lower():
+                # Instruction type
+                question_text = f'Instructions: Please answer the following questions honestly (example for {qt.name})'
+                param_values = ''
+            else:
+                # Generic example
+                question_text = f'Sample question for {qt.name}'
+                param_values = qt._param_names.replace('|', ' ') if qt._param_names else ''
+
+            writer.writerow([
+                question_text,
+                qt.name,
+                'false',
+                seq,
+                param_values,
+            ])
+            seq += 1
 
         return response
 

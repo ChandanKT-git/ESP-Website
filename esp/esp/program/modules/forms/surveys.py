@@ -83,10 +83,36 @@ def parse_csv(csv_file):
     parsed_rows = []
     errors = []
 
+    # Check if the file is a valid CSV by attempting to read it
     try:
         content = csv_file.read().decode('utf-8-sig')
     except UnicodeDecodeError:
-        errors.append({'row_number': 0, 'message': 'File is not valid UTF-8 encoded text.'})
+        # Try to detect if it's a binary file (like Excel, Numbers, etc.)
+        csv_file.seek(0)
+        first_bytes = csv_file.read(8)
+
+        # Check for common binary file signatures
+        if first_bytes.startswith(b'PK\x03\x04'):  # ZIP-based formats (xlsx, numbers, etc.)
+            errors.append({
+                'row_number': 0,
+                'message': 'The uploaded file appears to be a spreadsheet file (Excel, Numbers, etc.). Please export it as a CSV file and try again.'
+            })
+        elif first_bytes.startswith(b'\xd0\xcf\x11\xe0'):  # Old Excel format
+            errors.append({
+                'row_number': 0,
+                'message': 'The uploaded file appears to be an Excel file. Please save it as a CSV file and try again.'
+            })
+        else:
+            errors.append({
+                'row_number': 0,
+                'message': 'The uploaded file is not a valid CSV file. Please ensure the file is saved in CSV (Comma Separated Values) format.'
+            })
+        return parsed_rows, errors
+    except Exception as e:
+        errors.append({
+            'row_number': 0,
+            'message': f'Error reading file: {str(e)}. Please ensure the file is a valid CSV file.'
+        })
         return parsed_rows, errors
 
     reader = csv.DictReader(io.StringIO(content))
